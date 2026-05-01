@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Electric fields as fluid flow</title>
+<style>
+  :root {
+    --bg: #fafaf7;
+    --surface: #ffffff;
+    --surface-alt: #f1efe8;
+    --text: #1a1a1a;
+    --text-muted: #5f5e5a;
+    --border: rgba(0, 0, 0, 0.12);
+    --pos: #d85a30;
+    --neg: #378add;
+    --accent: #0f6e56;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a1a;
+      --surface: #242422;
+      --surface-alt: #2c2c2a;
+      --text: #f1efe8;
+      --text-muted: #b4b2a9;
+      --border: rgba(255, 255, 255, 0.15);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 22px; font-weight: 500; margin: 0 0 6px; }
+  .sub { color: var(--text-muted); font-size: 14px; margin: 0 0 20px; }
+  .controls {
+    display: flex; gap: 16px; margin-bottom: 12px;
+    flex-wrap: wrap; align-items: center;
+  }
+  .group { display: flex; gap: 8px; }
+  button {
+    padding: 6px 14px; font-size: 13px; font-family: inherit;
+    background: transparent; color: var(--text);
+    border: 0.5px solid var(--border); border-radius: var(--radius);
+    cursor: pointer; transition: background 0.15s;
+  }
+  button:hover { background: var(--surface-alt); }
+  button:active { transform: scale(0.98); }
+  button.active { background: var(--surface-alt); border-color: var(--text-muted); }
+  .toggles {
+    display: flex; gap: 16px; margin-bottom: 12px;
+    align-items: center; font-size: 13px; color: var(--text-muted);
+    flex-wrap: wrap;
+  }
+  .toggles label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .hint { margin-left: auto; font-size: 12px; }
+  .canvas-wrap {
+    position: relative; width: 100%;
+    background: var(--surface-alt); border-radius: var(--radius-lg);
+    border: 0.5px solid var(--border); overflow: hidden;
+  }
+  canvas { display: block; width: 100%; height: 480px; cursor: crosshair; }
+  .mode-label {
+    position: absolute; top: 12px; left: 14px;
+    font-size: 12px; padding: 4px 10px;
+    background: var(--surface); border: 0.5px solid var(--border);
+    border-radius: var(--radius); color: var(--text-muted);
+  }
+  .legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px; margin-top: 16px;
+  }
+  .cell {
+    background: var(--surface-alt); padding: 10px 12px;
+    border-radius: var(--radius);
+  }
+  .cell-label { font-size: 12px; color: var(--text-muted); }
+  .cell-value { font-size: 13px; margin-top: 2px; }
+  .footer {
+    margin-top: 20px; font-size: 12px; color: var(--text-muted);
+    line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Electric fields as fluid flow</h1>
+  <p class="sub">Positive charges behave like fluid sources, negative charges like sinks. Field lines are streamlines. The math underneath is identical.</p>
+
+  <div class="controls">
+    <div class="group">
+      <button id="mode-electric" class="active">Electric field view</button>
+      <button id="mode-fluid">Fluid flow view</button>
+    </div>
+    <div class="group" style="margin-left: auto;">
+      <button id="add-pos" class="active">+ Positive / source</button>
+      <button id="add-neg">+ Negative / sink</button>
+      <button id="reset">Reset</button>
+    </div>
+  </div>
+
+  <div class="toggles">
+    <label><input type="checkbox" id="show-arrows" checked /> Field arrows</label>
+    <label><input type="checkbox" id="show-lines" checked /> Field / stream lines</label>
+    <label><input type="checkbox" id="show-particles" checked /> Test particles</label>
+    <span class="hint">Drag charges to move them. Click empty space to add.</span>
+  </div>
+
+  <div class="canvas-wrap">
+    <canvas id="field-canvas"></canvas>
+    <div id="mode-label" class="mode-label">Electric field</div>
+  </div>
+
+  <div class="legend">
+    <div class="cell">
+      <div class="cell-label">Positive charge</div>
+      <div class="cell-value">Fluid source (tap)</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Negative charge</div>
+      <div class="cell-value">Fluid sink (drain)</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Field line</div>
+      <div class="cell-value">Streamline of flow</div>
+    </div>
+    <div class="cell">
+      <div class="cell-label">Field strength</div>
+      <div class="cell-value">Flow speed</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    In 2D, both systems satisfy the same Laplace equation outside their sources. Maxwell himself used this analogy when developing intuition for electromagnetism in the 1860s.
+  </div>
+</div>
+
+<script>
+(function() {
+  const canvas = document.getElementById('field-canvas');
+  const ctx = canvas.getContext('2d');
+  const modeLabel = document.getElementById('mode-label');
+  let mode = 'electric';
+  let showArrows = true;
+  let showLines = true;
+  let showParticles = true;
+  let charges = [
+    { x: 0.35, y: 0.5, q: 1 },
+    { x: 0.65, y: 0.5, q: -1 }
+  ];
+  let particles = [];
+  let dragIdx = -1;
+  let nextAddSign = 1;
+
+  function resize() {
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function getColors() {
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return {
+      pos: '#D85A30',
+      neg: '#378ADD',
+      arrow: isDark ? 'rgba(180,180,180,0.55)' : 'rgba(80,80,80,0.55)',
+      line: isDark ? 'rgba(150,150,150,0.45)' : 'rgba(100,100,100,0.45)',
+      particle: isDark ? '#1D9E75' : '#0F6E56',
+      isDark
+    };
+  }
+
+  function fieldAt(px, py) {
+    let ex = 0, ey = 0;
+    for (const c of charges) {
+      const dx = px - c.x;
+      const dy = py - c.y;
+      const r2 = dx * dx + dy * dy + 0.0008;
+      const r = Math.sqrt(r2);
+      ex += c.q * dx / (r2 * r);
+      ey += c.q * dy / (r2 * r);
+    }
+    return [ex, ey];
+  }
+
+  function draw() {
+    const rect = canvas.getBoundingClientRect();
+    const W = rect.width, H = rect.height;
+    const colors = getColors();
+    ctx.clearRect(0, 0, W, H);
+
+    if (showArrows) {
+      const step = 30;
+      for (let x = step / 2; x < W; x += step) {
+        for (let y = step / 2; y < H; y += step) {
+          const [ex, ey] = fieldAt(x / W, y / H);
+          const mag = Math.sqrt(ex * ex + ey * ey);
+          if (mag < 0.01) continue;
+          const len = Math.min(13, 4 + Math.log(1 + mag * 8) * 3);
+          const nx = ex / mag, ny = ey / mag;
+          ctx.strokeStyle = colors.arrow;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x - nx * len * 0.4, y - ny * len * 0.4);
+          ctx.lineTo(x + nx * len * 0.6, y + ny * len * 0.6);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(x + nx * len * 0.6, y + ny * len * 0.6);
+          ctx.lineTo(x + nx * len * 0.6 - nx * 3 + ny * 2, y + ny * len * 0.6 - ny * 3 - nx * 2);
+          ctx.lineTo(x + nx * len * 0.6 - nx * 3 - ny * 2, y + ny * len * 0.6 - ny * 3 + nx * 2);
+          ctx.closePath();
+          ctx.fillStyle = colors.arrow;
+          ctx.fill();
+        }
+      }
+    }
+
+    if (showLines) {
+      ctx.strokeStyle = colors.line;
+      ctx.lineWidth = 1.2;
+      for (const c of charges) {
+        if (c.q <= 0) continue;
+        const numLines = 16;
+        for (let i = 0; i < numLines; i++) {
+          const angle = (i / numLines) * Math.PI * 2;
+          let px = c.x + Math.cos(angle) * 0.015;
+          let py = c.y + Math.sin(angle) * 0.015;
+          ctx.beginPath();
+          ctx.moveTo(px * W, py * H);
+          for (let s = 0; s < 600; s++) {
+            const [ex, ey] = fieldAt(px, py);
+            const mag = Math.sqrt(ex * ex + ey * ey);
+            if (mag < 0.01 || mag > 2000) break;
+            px += (ex / mag) * 0.003;
+            py += (ey / mag) * 0.003;
+            if (px < 0 || px > 1 || py < 0 || py > 1) break;
+            let near = false;
+            for (const c2 of charges) {
+              if (c2.q < 0) {
+                const d = Math.hypot(px - c2.x, py - c2.y);
+                if (d < 0.02) { near = true; break; }
+              }
+            }
+            ctx.lineTo(px * W, py * H);
+            if (near) break;
+          }
+          ctx.stroke();
+        }
+      }
+    }
+
+    if (showParticles) {
+      ctx.fillStyle = colors.particle;
+      for (const p of particles) {
+        ctx.beginPath();
+        ctx.arc(p.x * W, p.y * H, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    for (const c of charges) {
+      const cx = c.x * W, cy = c.y * H;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 14, 0, Math.PI * 2);
+      ctx.fillStyle = c.q > 0 ? colors.pos : colors.neg;
+      ctx.fill();
+      ctx.strokeStyle = colors.isDark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.2)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = '500 15px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(mode === 'electric' ? (c.q > 0 ? '+' : '\u2212') : (c.q > 0 ? '\u2191' : '\u2193'), cx, cy);
+    }
+  }
+
+  function step() {
+    if (showParticles) {
+      for (const p of particles) {
+        const [ex, ey] = fieldAt(p.x, p.y);
+        const mag = Math.sqrt(ex * ex + ey * ey) + 0.0001;
+        const speed = Math.min(0.004, 0.001 + mag * 0.0008);
+        p.x += (ex / mag) * speed;
+        p.y += (ey / mag) * speed;
+        let absorbed = false;
+        for (const c of charges) {
+          if (c.q < 0 && Math.hypot(p.x - c.x, p.y - c.y) < 0.025) absorbed = true;
+        }
+        if (p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1 || absorbed) {
+          const sources = charges.filter(c => c.q > 0);
+          if (sources.length) {
+            const src = sources[Math.floor(Math.random() * sources.length)];
+            const a = Math.random() * Math.PI * 2;
+            p.x = src.x + Math.cos(a) * 0.02;
+            p.y = src.y + Math.sin(a) * 0.02;
+          }
+        }
+      }
+    }
+    draw();
+    requestAnimationFrame(step);
+  }
+
+  function spawnParticles() {
+    particles = [];
+    const sources = charges.filter(c => c.q > 0);
+    if (!sources.length) return;
+    for (let i = 0; i < 80; i++) {
+      const src = sources[i % sources.length];
+      const a = Math.random() * Math.PI * 2;
+      particles.push({ x: src.x + Math.cos(a) * 0.02, y: src.y + Math.sin(a) * 0.02 });
+    }
+  }
+
+  function getMousePos(e) {
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches ? e.touches[0] : e;
+    return { x: (t.clientX - rect.left) / rect.width, y: (t.clientY - rect.top) / rect.height };
+  }
+
+  function onDown(e) {
+    e.preventDefault();
+    const p = getMousePos(e);
+    for (let i = 0; i < charges.length; i++) {
+      const c = charges[i];
+      if (Math.hypot(p.x - c.x, p.y - c.y) < 0.035) { dragIdx = i; return; }
+    }
+    charges.push({ x: p.x, y: p.y, q: nextAddSign });
+    spawnParticles();
+  }
+  function onMove(e) {
+    if (dragIdx >= 0) {
+      e.preventDefault();
+      const p = getMousePos(e);
+      charges[dragIdx].x = Math.max(0.02, Math.min(0.98, p.x));
+      charges[dragIdx].y = Math.max(0.02, Math.min(0.98, p.y));
+    }
+  }
+  function onUp() { dragIdx = -1; }
+
+  canvas.addEventListener('mousedown', onDown);
+  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('mouseup', onUp);
+  canvas.addEventListener('mouseleave', onUp);
+  canvas.addEventListener('touchstart', onDown, { passive: false });
+  canvas.addEventListener('touchmove', onMove, { passive: false });
+  canvas.addEventListener('touchend', onUp);
+
+  function setActive(activeId, ids) {
+    ids.forEach(id => {
+      document.getElementById(id).classList.toggle('active', id === activeId);
+    });
+  }
+
+  document.getElementById('mode-electric').onclick = () => {
+    mode = 'electric'; modeLabel.textContent = 'Electric field';
+    setActive('mode-electric', ['mode-electric', 'mode-fluid']);
+  };
+  document.getElementById('mode-fluid').onclick = () => {
+    mode = 'fluid'; modeLabel.textContent = 'Fluid flow';
+    setActive('mode-fluid', ['mode-electric', 'mode-fluid']);
+  };
+  document.getElementById('add-pos').onclick = () => {
+    nextAddSign = 1;
+    setActive('add-pos', ['add-pos', 'add-neg']);
+  };
+  document.getElementById('add-neg').onclick = () => {
+    nextAddSign = -1;
+    setActive('add-neg', ['add-pos', 'add-neg']);
+  };
+  document.getElementById('reset').onclick = () => {
+    charges = [{ x: 0.35, y: 0.5, q: 1 }, { x: 0.65, y: 0.5, q: -1 }];
+    spawnParticles();
+  };
+  document.getElementById('show-arrows').onchange = e => { showArrows = e.target.checked; };
+  document.getElementById('show-lines').onchange = e => { showLines = e.target.checked; };
+  document.getElementById('show-particles').onchange = e => { showParticles = e.target.checked; };
+
+  resize();
+  window.addEventListener('resize', resize);
+  spawnParticles();
+  step();
+})();
+</script>
+</body>
+</html>
